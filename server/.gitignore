@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# Environment
+.env
+.env*.local
+
+# Database migrations (optional - commit if you want to share migrations)
+src/db/migrations/
+
+# Logs
+*.log
