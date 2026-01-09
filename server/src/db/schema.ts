@@ -5,9 +5,12 @@ import {
   timestamp,
   boolean,
   index,
-  pgEnum
+  pgEnum,
+  varchar,
+  numeric
 } from "drizzle-orm/pg-core";
 
+// Enums
 export const roleEnum = pgEnum("user_role", ["buyer", "seller"]);
 export const messageStatusEnum = pgEnum("message_status", [
   "sent",
@@ -20,6 +23,7 @@ export const attachmentTypeEnum = pgEnum("attachment_type", [
   "other"
 ]);
 
+// Better Auth Tables
 export const users = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -29,9 +33,9 @@ export const users = pgTable("user", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .$onUpdate(() => new Date())
     .notNull(),
-  role: text("role").notNull()
+  role: roleEnum("role").default("buyer")
 });
 
 export const sessions = pgTable(
@@ -93,9 +97,100 @@ export const verifications = pgTable(
   (table) => [index("verification_identifier_idx").on(table.identifier)]
 );
 
+export const products = pgTable("products", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  sellerId: text("seller_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  price: numeric("price", { precision: 12, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow()
+});
+
+export const conversations = pgTable("conversations", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  buyerId: text("buyer_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  sellerId: text("seller_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  productId: text("product_id").references(() => products.id, {
+    onDelete: "set null"
+  }),
+  lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull()
+});
+
+export const messages = pgTable("messages", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  conversationId: text("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  senderId: text("sender_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  content: text("content"),
+  status: messageStatusEnum("status").default("sent").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull()
+});
+
+export const attachments = pgTable("attachments", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  messageId: text("message_id")
+    .notNull()
+    .references(() => messages.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: attachmentTypeEnum("type").notNull(),
+  mimeType: varchar("mime_type", { length: 100 }).notNull(),
+  size: varchar("size", { length: 50 }),
+  createdAt: timestamp("created_at").defaultNow()
+});
+
+export const readReceipts = pgTable("read_receipts", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  conversationId: text("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  lastReadMessageId: text("last_read_message_id").references(
+    () => messages.id,
+    { onDelete: "set null" }
+  ),
+  readAt: timestamp("read_at").defaultNow().notNull()
+});
+
+// Relations
 export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
-  accounts: many(accounts)
+  accounts: many(accounts),
+  sentMessages: many(messages),
+  buyerConversations: many(conversations, { relationName: "buyer" }),
+  sellerConversations: many(conversations, { relationName: "seller" }),
+  readReceipts: many(readReceipts),
+  products: many(products)
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
@@ -109,5 +204,69 @@ export const accountsRelations = relations(accounts, ({ one }) => ({
   user: one(users, {
     fields: [accounts.userId],
     references: [users.id]
+  })
+}));
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  seller: one(users, {
+    fields: [products.sellerId],
+    references: [users.id]
+  }),
+  conversations: many(conversations)
+}));
+
+export const conversationsRelations = relations(
+  conversations,
+  ({ one, many }) => ({
+    buyer: one(users, {
+      fields: [conversations.buyerId],
+      references: [users.id],
+      relationName: "buyer"
+    }),
+    seller: one(users, {
+      fields: [conversations.sellerId],
+      references: [users.id],
+      relationName: "seller"
+    }),
+    messages: many(messages),
+    readReceipts: many(readReceipts),
+    product: one(products, {
+      fields: [conversations.productId],
+      references: [products.id]
+    })
+  })
+);
+
+export const messagesRelations = relations(messages, ({ one, many }) => ({
+  conversation: one(conversations, {
+    fields: [messages.conversationId],
+    references: [conversations.id]
+  }),
+  sender: one(users, {
+    fields: [messages.senderId],
+    references: [users.id]
+  }),
+  attachments: many(attachments)
+}));
+
+export const attachmentsRelations = relations(attachments, ({ one }) => ({
+  message: one(messages, {
+    fields: [attachments.messageId],
+    references: [messages.id]
+  })
+}));
+
+export const readReceiptsRelations = relations(readReceipts, ({ one }) => ({
+  conversation: one(conversations, {
+    fields: [readReceipts.conversationId],
+    references: [conversations.id]
+  }),
+  user: one(users, {
+    fields: [readReceipts.userId],
+    references: [users.id]
+  }),
+  lastReadMessage: one(messages, {
+    fields: [readReceipts.lastReadMessageId],
+    references: [messages.id]
   })
 }));
