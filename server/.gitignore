@@ -10,7 +10,7 @@ build/
 .env*.local
 
 # Database migrations (optional - commit if you want to share migrations)
-src/db/migrations/
+# src/db/migrations/
 
 # Logs
 *.log
